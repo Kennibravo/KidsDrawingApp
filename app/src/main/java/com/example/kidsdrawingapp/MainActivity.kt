@@ -8,6 +8,8 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.media.MediaScannerConnection
+import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
 import android.util.Log
@@ -17,6 +19,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.view.get
 import com.example.kidsdrawingapp.databinding.ActivityMainBinding
 import com.example.kidsdrawingapp.databinding.DialogBrushSizeBinding
@@ -29,10 +32,11 @@ import java.io.FileOutputStream
 
 class MainActivity : AppCompatActivity() {
     private var scope = CoroutineScope(Dispatchers.Main)
-
+    private lateinit var fileResultName: String
     private lateinit var binding: ActivityMainBinding
     private lateinit var brushDialogBinding: DialogBrushSizeBinding
     private var mImageButtonCurrentPaint: ImageButton? = null
+    private lateinit var mProgressDialog: Dialog
 
     override fun onCreate(savedInstanceState: Bundle?) {
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -41,7 +45,12 @@ class MainActivity : AppCompatActivity() {
         binding.drawingView.setSizeForBrush(20.toFloat())
 
         mImageButtonCurrentPaint = binding.llPaintColors[1] as ImageButton
-        mImageButtonCurrentPaint!!.setImageDrawable(ContextCompat.getDrawable(this, R.drawable.pallet_pressed))
+        mImageButtonCurrentPaint!!.setImageDrawable(
+            ContextCompat.getDrawable(
+                this,
+                R.drawable.pallet_pressed
+            )
+        )
 
         binding.ibBrush.setOnClickListener {
             showBrushSizeChooserDialog()
@@ -49,7 +58,8 @@ class MainActivity : AppCompatActivity() {
 
         binding.ibGallery.setOnClickListener {
             if (isReadStorageAllowed()) {
-                val pickPhotoIntent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+                val pickPhotoIntent =
+                    Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
                 startActivityForResult(pickPhotoIntent, GALLERY)
             } else {
                 requestStoragePermission()
@@ -63,17 +73,44 @@ class MainActivity : AppCompatActivity() {
 
         binding.ibSave.setOnClickListener {
             if (isReadStorageAllowed()) {
+                preExecute()
                 scope.launch {
                     val t: Boolean = bitmapTask(getBitmapFromView(binding.flDrawingViewContainer))
-                    println("Good to go!")
-                    if(t) Toast.makeText(this@MainActivity, "Downloaded", Toast.LENGTH_LONG).show()
-
+                    postExecute(t)
                 }
+
+            }else{
+                requestStoragePermission()
             }
         }
+
         super.onCreate(savedInstanceState)
         setContentView(binding.root)
 
+    }
+
+    private fun preExecute() {
+        showProgressDialog()
+    }
+
+    private fun postExecute(res: Boolean) {
+        cancelProgressDialog()
+        if (res) Toast.makeText(this@MainActivity, "Downloaded", Toast.LENGTH_LONG).show()
+
+        MediaScannerConnection.scanFile(this@MainActivity, arrayOf(fileResultName), null){
+            path, uri -> var shareIntent = Intent()
+
+            shareIntent.action = Intent.ACTION_SEND
+            shareIntent.putExtra(Intent.EXTRA_STREAM, Uri.parse(fileResultName))
+//            shareIntent.putExtra(Intent.EXTRA_STREAM, uri)
+//            println("Uri is ${uri.toString()}")
+            shareIntent.type = "image/png"
+            startActivity(
+                Intent.createChooser(
+                    shareIntent, "Share"
+                )
+            )
+        }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -130,7 +167,7 @@ class MainActivity : AppCompatActivity() {
             binding.drawingView.setColor(view.tag.toString())
 
             mImageButtonCurrentPaint!!.setImageDrawable(
-                    ContextCompat.getDrawable(this, R.drawable.pallet_normal)
+                ContextCompat.getDrawable(this, R.drawable.pallet_normal)
             )
             mImageButtonCurrentPaint = view
         }
@@ -138,43 +175,57 @@ class MainActivity : AppCompatActivity() {
 
     fun showColorPicker(view: View) {
         ColorPickerPopup.Builder(this)
-                .initialColor(Color.RED) // Set initial color
-                .enableBrightness(true) // Enable brightness slider or not
-                .enableAlpha(true) // Enable alpha slider or not
-                .okTitle("Choose")
-                .cancelTitle("Cancel")
-                .showIndicator(true)
-                .showValue(true)
-                .build()
-                .show(view, object : ColorPickerObserver() {
-                    override fun onColorPicked(color: Int) {
-                        binding.drawingView.setColor(color.toString(), "int")
+            .initialColor(Color.RED) // Set initial color
+            .enableBrightness(true) // Enable brightness slider or not
+            .enableAlpha(true) // Enable alpha slider or not
+            .okTitle("Choose")
+            .cancelTitle("Cancel")
+            .showIndicator(true)
+            .showValue(true)
+            .build()
+            .show(view, object : ColorPickerObserver() {
+                override fun onColorPicked(color: Int) {
+                    binding.drawingView.setColor(color.toString(), "int")
 
-                        mImageButtonCurrentPaint = view as ImageButton
-                    }
+                    mImageButtonCurrentPaint = view as ImageButton
+                }
 
-                    fun onColor(color: Int, fromUser: Boolean) {}
-                })
+                fun onColor(color: Int, fromUser: Boolean) {}
+            })
     }
 
     private fun requestStoragePermission() {
-        var permission: Array<String> = arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE,
-                Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        var permission: Array<String> = arrayOf(
+            Manifest.permission.READ_EXTERNAL_STORAGE,
+            Manifest.permission.WRITE_EXTERNAL_STORAGE
+        )
 
-        if (ActivityCompat.shouldShowRequestPermissionRationale(this,
-                        permission.toString())) {
-            Toast.makeText(this, "You need permission to add a background!", Toast.LENGTH_LONG).show()
+        if (ActivityCompat.shouldShowRequestPermissionRationale(
+                this,
+                permission.toString()
+            )
+        ) {
+            Toast.makeText(this, "You need permission to add a background!", Toast.LENGTH_LONG)
+                .show()
         }
 
         ActivityCompat.requestPermissions(this, permission, STORAGE_PERMISSION_CODE)
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
 
         if (requestCode == STORAGE_PERMISSION_CODE) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(this, "Permission granted, you can now read Storage files", Toast.LENGTH_LONG).show()
+                Toast.makeText(
+                    this,
+                    "Permission granted, you can now read Storage files",
+                    Toast.LENGTH_LONG
+                ).show()
             } else {
                 Toast.makeText(this, "Oops, you denied the permission!", Toast.LENGTH_LONG).show()
             }
@@ -182,7 +233,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isReadStorageAllowed(): Boolean {
-        val result = ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
+        val result =
+            ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
 
         return result == PackageManager.PERMISSION_GRANTED
     }
@@ -203,8 +255,8 @@ class MainActivity : AppCompatActivity() {
         return returnedBitmap
     }
 
-    private suspend fun bitmapTask(mBitmap: Bitmap): Boolean{
-        return withContext(Dispatchers.IO){
+    private suspend fun bitmapTask(mBitmap: Bitmap): Boolean {
+        return withContext(Dispatchers.IO) {
             downloadBitmap(mBitmap)
         }
     }
@@ -213,21 +265,37 @@ class MainActivity : AppCompatActivity() {
         return try {
             val bytes = ByteArrayOutputStream()
             mBitmap.compress(Bitmap.CompressFormat.PNG, 90, bytes)
-            val f = File(externalCacheDir!!.absoluteFile.toString()
-                    + File.separator + "KidDrawingApp_"
-                    + System.currentTimeMillis() / 1000 + ".png")
+            val f = File(
+                externalCacheDir!!.absoluteFile.toString()
+                        + File.separator + "KidDrawingApp_"
+                        + System.currentTimeMillis() / 1000 + ".png"
+            )
 
             val fos = FileOutputStream(f)
+            fileResultName = f.absolutePath
+
+            println("Uri is $fileResultName")
+
             fos.write(bytes.toByteArray())
             fos.close()
 
-            delay(7000)
+            delay(1000)
 
             true
         } catch (e: Exception) {
             e.printStackTrace()
             false
         }
+    }
+
+    private fun showProgressDialog() {
+        mProgressDialog = Dialog(this)
+        mProgressDialog.setContentView(R.layout.dialog_custom_progress)
+        mProgressDialog.show()
+    }
+
+    private fun cancelProgressDialog() {
+        mProgressDialog.dismiss()
     }
 
     companion object {
